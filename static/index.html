@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf8">
+        <title>Multil-Blocks upload</title>
+    </head>
+
+    <body>
+        <h2>Multil-Blocks upload</h2>
+
+        <input id="file" type="file" />
+
+        <input type="checkbox" id="multil_block_file">multil block file</input>
+        <button type="button" onclick="on_block_upload()">Block upload</button>
+        <button type="button" onclick="on_concurrency_upload()">Concurrency upload</button>
+        <hr/>
+
+        <div>
+            <label>File name: </label><span id="file_name"></span>
+        </div>
+        <div>
+            <label>File size: </label><span id="file_size"></span>
+        </div>
+        <div>
+            <label>Split blocks: </label><span id="block_count"></span>
+        </div>
+
+        <hr/>
+
+        <p id="upload_info"></p>
+
+        <script>
+            var Block_Size = 1024 * 1024 * 2;
+
+            var el_file = document.getElementById('file');
+            var el_multil_block_file = document.getElementById('multil_block_file');
+            var el_file_name = document.getElementById('file_name');
+            var el_file_size = document.getElementById('file_size');
+            var el_block_count = document.getElementById('block_count');
+            var el_upload_info = document.getElementById('upload_info');
+
+            var file = null;
+            var total_blocks = 0;
+            var block_index = -1;
+            var block_index_random_arr = [];
+            var form_data = null;
+
+
+            el_file.onchange = function() {
+                if (this.files.length === 0) return;
+
+                file = this.files[0];
+                total_blocks = Math.ceil( file.size / Block_Size );
+
+                el_file_name.innerText = file.name;
+                el_file_size.innerText = file.size;
+                el_block_count.innerText = total_blocks;
+            }
+
+            function print_info(msg) {
+                el_upload_info.innerHTML += `${msg}<br/>`;
+            }
+
+            function done() {
+                file = null;
+                total_blocks = 0;
+                block_index = -1;
+                form_data = null;
+                
+                el_file.value = '';
+            }
+
+
+            function get_base_form_data() {
+                var base_data = new FormData();
+                base_data.append('file_name', file.name);
+                base_data.append('file_size', file.size);
+                base_data.append('block_size', Block_Size);
+                base_data.append('total_blocks', total_blocks);
+                base_data.append('break_error', true);
+                base_data.append('index', 0);
+                base_data.append('data', null);
+
+                return base_data
+            }
+
+
+            function build_block_index_random_arr() {
+                block_index_random_arr = new Array(total_blocks).fill(0).map((v,i) => i);
+                block_index_random_arr.sort((n, m) => Math.random() > .5 ? -1 : 1);
+
+                print_info(`Upload sequence: ${block_index_random_arr}`);
+            }
+
+
+            function post(index, success_cb, failed_cb) {
+                if (!form_data) {
+                    form_data = get_base_form_data();
+                }
+                var start = index * Block_Size;
+                var end = Math.min(file.size, start + Block_Size);
+
+                form_data.set('index', index);
+                form_data.set('data', file.slice(start, end));
+
+                print_info(`Post ${index}/${total_blocks}, offset: ${start} -- ${end}`);
+
+
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', '/upload', true);
+                /*
+                    Browser-based general content types
+                    Content-Type: multipart/form-data; boundary=----WebKitFormBoundarysXH5DIES2XFMuLXL
+
+                    Error content type:
+                    xhr.setRequestHeader('Content-Type', 'multipart/form-data');
+                    Content-Type: multipart/form-data;
+                */
+                xhr.onreadystatechange = function() {
+
+                    if (xhr.readyState === XMLHttpRequest.DONE) {
+
+                        if (xhr.status >= 200 && xhr.status < 300 && success_cb) {
+                            return success_cb();
+                        }
+
+                        if (xhr.status >= 400 && failed_cb) {
+                            failed_cb();
+                        }
+                    }
+                }
+
+                // xhr.onerror event
+                xhr.send(form_data);
+            }
+
+
+            function block_upload() {
+                if (!file) {
+                    return;
+                }
+                if (block_index + 1 >= total_blocks) {
+                    return done();
+                }
+
+                block_index++;
+                var index = block_index_random_arr[block_index];
+            
+                post(index, block_upload);
+            }
+
+
+            function concurrency_upload() {
+                if (!file || total_blocks === 0) {
+                    return;
+                }
+
+                build_block_index_random_arr();
+
+                form_data = get_base_form_data();
+                form_data.set('break_error', false);
+                form_data.set('multil_block', el_multil_block_file.checked);
+
+                for (var i of block_index_random_arr) {
+                    ((idx) => {
+                        post(idx, null, function() {
+                            print_info(`Failed: ${idx}`);
+                            setTimeout(() => post(idx), 1000);
+                        });
+                    })(i);
+                }
+            }
+
+
+            function on_block_upload() {
+                if (file) {
+                    print_info('Block upload');
+
+                    form_data = get_base_form_data();
+                    form_data.set('multil_block', el_multil_block_file.checked);
+
+                    build_block_index_random_arr();
+
+                    block_index = -1;
+                    block_upload();
+                }
+            }
+
+            function on_concurrency_upload() {
+                if (file) {
+                    print_info('Concurrency upload');
+                    concurrency_upload();
+                }
+            }
+        </script>
+
+    </body>
+</html>
